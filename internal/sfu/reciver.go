@@ -124,7 +124,7 @@ type ReceiverStats struct {
 
 // Основной цикл чтения RTP-пакетов
 func (r *Receiver) readLoop() {
-	defer log.Printf("[Reciever] readLoop stopped: track=%s stream=%s kind=%s",
+	defer log.Printf("[Receiver] readLoop stopped: track=%s stream=%s kind=%s",
 		r.trackID, r.streamID, r.trackKind)
 
 	// Проверка контекста Reciever
@@ -143,7 +143,7 @@ func (r *Receiver) readLoop() {
 			PutRTPBuffer(buf)
 
 			if err == io.EOF {
-				log.Printf("[Reciever] track closed (EOF): track=%s", r.trackID)
+				log.Printf("[Receiver] track closed (EOF): track=%s", r.trackID)
 				return
 			}
 
@@ -151,7 +151,7 @@ func (r *Receiver) readLoop() {
 				return
 			}
 
-			log.Printf("[Reciever] read error: track=%s err=%s", r.trackID, err)
+			log.Printf("[Receiver] read error: track=%s err=%s", r.trackID, err)
 			return
 		}
 

@@ -50,4 +50,4 @@ Thumbs.db
 *.prof
 # Файлы бенчмарков
 *.test
-info
+info/

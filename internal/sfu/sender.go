@@ -142,13 +142,16 @@ type SenderStats struct {
 
 // Основной цикл записи RTP-пакетов в WebRTC-трек
 func (s *Sender) writeLoop() {
-	defer log.Printf("[Sender] writeLoop stopped: tarck=%s peer=%s", s.id, s.peerID)
+	defer log.Printf("[Sender] writeLoop stopped: track=%s peer=%s", s.id, s.peerID)
 
 	for {
 		select {
+		// Контекст отменем.
+		// Очищаем оставшиеся пакеты из канала
 		case <-s.ctx.Done():
 			s.drainChannel()
 			return
+
 		case pkt := <-s.ch:
 			_, err := s.track.Write(pkt.data[:pkt.n])
 			senderPacketPool.Put(pkt)
@@ -161,7 +164,7 @@ func (s *Sender) writeLoop() {
 				}
 				log.Printf("[Sender] write error: track=%s peer=%s err=%v",
 					s.id, s.peerID, err)
-				continue
+				return
 			}
 
 			// Обновляем статистику

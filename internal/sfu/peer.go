@@ -42,7 +42,7 @@ func (s PeerState) String() string {
 }
 
 // Сообщение для отправки клиенту через WebSocket
-type NegotiotionMessage struct {
+type NegotiationMessage struct {
 	Type string `json:"type"`
 	Data string `json:"data"`
 }
@@ -60,7 +60,7 @@ func DefaultPeerConfig() PeerConfig {
 		ICEServers: []webrtc.ICEServer{
 			{URLs: []string{"stun:stun.l.google.com:19302"}},
 		},
-		ReceiverConfig: DefaultRecieverConfig(),
+		ReceiverConfig: DefaultReceiverConfig(),
 		SenderConfig:   DefaultSenderConfig(),
 	}
 }
@@ -72,7 +72,7 @@ type Peer struct {
 	router             *Router
 	state              PeerState
 	rtpSenders         map[string]*webrtc.RTPSender
-	onNegotiate        func(msg NegotiotionMessage)
+	onNegotiate        func(msg NegotiationMessage)
 	onClose            func(peerID string)
 	mu                 sync.Mutex
 	negotiationPending bool
@@ -130,7 +130,7 @@ func (p *Peer) State() PeerState {
 func (p *Peer) Context() context.Context { return p.ctx }
 
 // Установка callback onNegotiate для отправки SDP/ICE
-func (p *Peer) SetOnNegotiate(fn func(NegotiotionMessage)) {
+func (p *Peer) SetOnNegotiate(fn func(NegotiationMessage)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.onNegotiate = fn
@@ -263,7 +263,7 @@ func (p *Peer) setupCallbacks() {
 			p.id, track.ID(), track.StreamID(), track.Kind(), track.Codec().MimeType)
 
 		// Создаем наш Receiver для этого трека
-		recv := NewReciever(p.ctx, track, p.pc, p.config.ReceiverConfig)
+		recv := NewReceiver(p.ctx, track, p.pc, p.id, p.config.ReceiverConfig)
 
 		// Регистрируем в Router, а дальше он запустит цикл сбора пакетов
 		// Также триггер для всех подписок
@@ -293,7 +293,7 @@ func (p *Peer) setupCallbacks() {
 		p.mu.Unlock()
 
 		if onNeg != nil {
-			onNeg(NegotiotionMessage{
+			onNeg(NegotiationMessage{
 				Type: "candidate",
 				Data: string(candidateJSON),
 			})
@@ -338,7 +338,14 @@ func (p *Peer) setupCallbacks() {
 func (p *Peer) negotiate() {
 	p.mu.Lock()
 
+	// Проверка, не закрыт ли peer
 	if p.state == PeerStateClosed || p.state == PeerStateFailed {
+		p.mu.Unlock()
+		return
+	}
+
+	// Проверка negotiate на запланированность
+	if p.negotiationPending {
 		p.mu.Unlock()
 		return
 	}
@@ -384,7 +391,7 @@ func (p *Peer) negotiate() {
 		return
 	}
 
-	onNeg(NegotiotionMessage{
+	onNeg(NegotiationMessage{
 		Type: "offer",
 		Data: string(offerJSON),
 	})

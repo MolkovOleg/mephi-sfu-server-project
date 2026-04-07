@@ -71,7 +71,7 @@ func (r *Router) AddReceiver(receiver *Receiver) {
 
 	receiver.Start()
 
-	log.Printf("[Router] receiver added: track=%s stram=%s king=%s",
+	log.Printf("[Router] receiver added: track=%s stream=%s kind=%s",
 		receiver.trackID, receiver.streamID, receiver.trackKind)
 
 	// Вызываем вне блокировки для избежания DEADLOCK
@@ -132,7 +132,7 @@ func (r *Router) Subscribe(
 	// Ищем receiver по треку
 	receiver, ok := r.receivers[trackID]
 	if !ok {
-		log.Printf("[Router] subcribe failed: track=%s not found", trackID)
+		log.Printf("[Router] subscribe failed: track=%s not found", trackID)
 		return nil, nil
 	}
 
@@ -305,7 +305,7 @@ func (r *Router) Stats() RouterStats {
 	defer r.mu.RUnlock()
 
 	stats := RouterStats{
-		RecieverCount: len(r.receivers),
+		ReceiverCount: len(r.receivers),
 	}
 
 	for _, senders := range r.senders {
@@ -317,6 +317,6 @@ func (r *Router) Stats() RouterStats {
 
 // Статистика собранная Router'ом
 type RouterStats struct {
-	RecieverCount int // Кол-во входящих треков
+	ReceiverCount int // Кол-во входящих треков
 	SenderCount   int // Кол-во исходящих треков (подписок)
 }

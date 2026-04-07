@@ -13,34 +13,35 @@ import (
 )
 
 // =============================================================================
-// Приемник входящего медия-трафика (Reciever)
+// Приемник входящего медия-трафика (Receiver)
 // =============================================================================
 
-// Настройка Reciver
+// Настройка Receiver
 type ReceiverConfig struct {
 	// Интервал автоматической отправки PLI-запросов
 	PLIInterval time.Duration
 }
 
 // Установка настроек по умолчанию
-func DefaultRecieverConfig() ReceiverConfig {
+func DefaultReceiverConfig() ReceiverConfig {
 	return ReceiverConfig{
 		PLIInterval: 2 * time.Second,
 	}
 }
 
 // Тип callback-функции, вызываемой при получении RTP-пакета
-type OnPAcketFunc func(buf *[]byte, n int)
+type OnPacketFunc func(buf *[]byte, n int)
 
-// Reciever - приемник входящего WebRTC медиа-трека
+// Receiver — приемник входящего WebRTC медиа-трека
 type Receiver struct {
 	trackID         string
 	streamID        string
 	trackKind       webrtc.RTPCodecType
+	ownerPeerID     string
 	codec           webrtc.RTPCodecParameters
 	track           *webrtc.TrackRemote
 	peerConnection  *webrtc.PeerConnection
-	onPacket        OnPAcketFunc
+	onPacket        OnPacketFunc
 	onPacketMu      sync.RWMutex
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -50,11 +51,12 @@ type Receiver struct {
 	config          ReceiverConfig
 }
 
-// Создание нового Reciever для входящего трека
-func NewReciever(
+// Создание нового Receiver для входящего трека
+func NewReceiver(
 	ctx context.Context,
 	track *webrtc.TrackRemote,
 	pc *webrtc.PeerConnection,
+	ownerPeerID string,
 	config ReceiverConfig,
 ) *Receiver {
 	receiverCtx, cancel := context.WithCancel(ctx)
@@ -63,6 +65,7 @@ func NewReciever(
 		trackID:        track.ID(),
 		streamID:       track.StreamID(),
 		trackKind:      track.Kind(),
+		ownerPeerID:    ownerPeerID,
 		codec:          track.Codec(),
 		track:          track,
 		peerConnection: pc,
@@ -80,7 +83,7 @@ func (r *Receiver) Start() {
 	go r.pliLoop()
 }
 
-// Остановка всех горутин у Reciever (безопасен для потвороного вызова sync.Once)
+// Остановка всех горутин у Receiver (безопасен для повторного вызова sync.Once)
 func (r *Receiver) Stop() {
 	r.closeOnce.Do(func() {
 		r.cancel()
@@ -88,7 +91,7 @@ func (r *Receiver) Stop() {
 }
 
 // Установка callback для получения RTP-пакетов
-func (r *Receiver) SetOnPacket(fn OnPAcketFunc) {
+func (r *Receiver) SetOnPacket(fn OnPacketFunc) {
 	r.onPacketMu.Lock()
 	defer r.onPacketMu.Unlock()
 	r.onPacket = fn
@@ -99,6 +102,9 @@ func (r *Receiver) TrackID() string { return r.trackID }
 
 // Возвращает ID потока
 func (r *Receiver) StreamID() string { return r.streamID }
+
+// Возвращает ID владельца трека (Peer, который публикует)
+func (r *Receiver) OwnerPeerID() string { return r.ownerPeerID }
 
 // Возвращает тип трека (аудио/видео)
 func (r *Receiver) Kind() webrtc.RTPCodecType { return r.trackKind }
@@ -114,7 +120,7 @@ func (r *Receiver) Stats() ReceiverStats {
 	}
 }
 
-// Статистика приема по Reciever
+// Статистика приема по Receiver
 type ReceiverStats struct {
 	PacketsReceived uint64
 	BytesReceived   uint64
@@ -127,7 +133,7 @@ func (r *Receiver) readLoop() {
 	defer log.Printf("[Receiver] readLoop stopped: track=%s stream=%s kind=%s",
 		r.trackID, r.streamID, r.trackKind)
 
-	// Проверка контекста Reciever
+	// Проверка контекста Receiver
 	for {
 		select {
 		case <-r.ctx.Done():

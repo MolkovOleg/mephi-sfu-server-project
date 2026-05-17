@@ -77,13 +77,14 @@ type Peer struct {
 	state              PeerState
 	rtpSenders         map[string]*webrtc.RTPSender
 	onNegotiate        func(msg NegotiationMessage)
-	onClose            func(peerID string)
-	mu                 sync.Mutex
-	negotiationPending bool
-	ctx                context.Context
-	cancel             context.CancelFunc
-	closeOnce          sync.Once
-	config             PeerConfig
+	onClose             func(peerID string)
+	mu                  sync.Mutex
+	negotiationPending  bool
+	renegotiationNeeded bool // флаг: нужна повторная переговорка после текущей
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	closeOnce           sync.Once
+	config              PeerConfig
 }
 
 // Создание нового Peer'а
@@ -147,9 +148,23 @@ func (p *Peer) SetOnClose(fn func(string)) {
 	p.onClose = fn
 }
 
-// Обработка SDP ответа от клиента
+// Обработка SDP ответа от клиента.
+// После применения answer проверяем, была ли отложенная переговорка.
 func (p *Peer) HandleAnswer(answer webrtc.SessionDescription) error {
-	return p.pc.SetRemoteDescription(answer)
+	if err := p.pc.SetRemoteDescription(answer); err != nil {
+		return err
+	}
+
+	// Если за время ожидания answer поступили новые треки — запускаем renegotiation
+	p.mu.Lock()
+	needRenego := p.renegotiationNeeded
+	p.renegotiationNeeded = false
+	p.mu.Unlock()
+
+	if needRenego {
+		go p.negotiate()
+	}
+	return nil
 }
 
 // Обработка ICE-кандидат от клиента
@@ -366,18 +381,19 @@ func (p *Peer) setupCallbacks() {
 func (p *Peer) negotiate() {
 	p.mu.Lock()
 
-	// Проверка, не закрыт ли peer
 	if p.state == PeerStateClosed || p.state == PeerStateFailed {
 		p.mu.Unlock()
 		return
 	}
 
-	// Проверка negotiate на запланированность
+	// Если уже идёт переговорка — откладываем повторную
 	if p.negotiationPending {
+		p.renegotiationNeeded = true
 		p.mu.Unlock()
 		return
 	}
 	p.negotiationPending = true
+	p.renegotiationNeeded = false
 
 	onNeg := p.onNegotiate
 	p.mu.Unlock()
@@ -390,17 +406,27 @@ func (p *Peer) negotiate() {
 		return
 	}
 
-	// Создаем SDP offer
+	// Если PC не в stable — откладываем до получения answer
+	// (это случается когда два трека добавляются почти одновременно)
+	if sigState := p.pc.SignalingState(); sigState != webrtc.SignalingStateStable {
+		log.Printf("[Peer] negotiate deferred (state=%s): peer=%s", sigState, p.id)
+		p.mu.Lock()
+		p.negotiationPending = false
+		p.renegotiationNeeded = true // HandleAnswer запустит повторно
+		p.mu.Unlock()
+		return
+	}
+
+	// Создаём SDP offer
 	offer, err := p.pc.CreateOffer(nil)
 	if err != nil {
-		log.Printf("[Peer] set local description error: peer=%s err=%v", p.id, err)
+		log.Printf("[Peer] create offer error: peer=%s err=%v", p.id, err)
 		p.mu.Lock()
 		p.negotiationPending = false
 		p.mu.Unlock()
 		return
 	}
 
-	// Применяем offer локально
 	if err := p.pc.SetLocalDescription(offer); err != nil {
 		log.Printf("[Peer] set local description error: peer=%s err=%v", p.id, err)
 		p.mu.Lock()
@@ -409,10 +435,9 @@ func (p *Peer) negotiate() {
 		return
 	}
 
-	// Сериализуем offer и отправляем клиенту
 	offerJSON, err := json.Marshal(offer)
 	if err != nil {
-		log.Printf("[Peer] offer marshal error: peer=%s error=%v", p.id, err)
+		log.Printf("[Peer] offer marshal error: peer=%s err=%v", p.id, err)
 		p.mu.Lock()
 		p.negotiationPending = false
 		p.mu.Unlock()
@@ -424,10 +449,16 @@ func (p *Peer) negotiate() {
 		Data: string(offerJSON),
 	})
 
-	// Сбрасываем флаг - negotiation завершен
 	p.mu.Lock()
+	needRenego := p.renegotiationNeeded
+	p.renegotiationNeeded = false
 	p.negotiationPending = false
 	p.mu.Unlock()
 
 	log.Printf("[Peer] offer sent: peer=%s", p.id)
+
+	// Если пока ждали answer пришли новые треки — запускаем ещё раунд
+	if needRenego {
+		go p.negotiate()
+	}
 }

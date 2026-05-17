@@ -3,8 +3,10 @@ module sfu-server
 go 1.25.5
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/pion/rtcp v1.2.14
 	github.com/pion/webrtc/v3 v3.3.6
+	github.com/stretchr/testify v1.10.0
 )
 
 require (
@@ -25,7 +27,6 @@ require (
 	github.com/pion/transport/v2 v2.2.10 // indirect
 	github.com/pion/turn/v2 v2.1.6 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/stretchr/testify v1.10.0 // indirect
 	github.com/wlynxg/anet v0.0.3 // indirect
 	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/net v0.22.0 // indirect

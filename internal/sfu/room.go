@@ -8,7 +8,7 @@ import (
 )
 
 // =============================================================================
-// room.go — Менеджер конференц-комнаты (Room)
+// Менеджер конференц-комнаты (Room)
 // =============================================================================
 var (
 	ErrRoomFull          = errors.New("room is full")
@@ -17,7 +17,7 @@ var (
 
 // RoomConfig — настройки комнаты.
 type RoomConfig struct {
-	// Максимальное кол-во участников в комнате (0 — без ограничения).
+	// Максимальное кол-во участников в комнате
 	MaxPeers int
 }
 
@@ -28,7 +28,7 @@ func DefaultRoomConfig() RoomConfig {
 	}
 }
 
-// Room — представление одной конференции (комнаты) в SFU сервере.
+// Room — представление одной конференции (комнаты) в SFU сервере
 type Room struct {
 	id        string
 	router    *Router
@@ -41,7 +41,7 @@ type Room struct {
 	onClose   func(roomID string)
 }
 
-// NewRoom создаёт новую инстанцию комнаты.
+// NewRoom создаёт новую инстанцию комнаты
 func NewRoom(ctx context.Context, id string, config RoomConfig) *Room {
 	roomCtx, cancel := context.WithCancel(ctx)
 
@@ -79,13 +79,13 @@ func (r *Room) SetOnClose(fn func(string)) {
 	r.onClose = fn
 }
 
-// Join добавляет нового участника (Peer) в комнату.
+// Join добавляет нового участника (Peer) в комнату
 //
 // Выполняет следующие действия:
-//  1. Проверяет лимиты комнаты.
-//  2. Инициализирует инстанс Peer'а (WebRTC PeerConnection).
-//  3. Устанавливает слушатель отключения пира.
-//  4. Подписывает нового участника на ВСЕ уже существующие треки в комнате.
+//  1. Проверяет лимиты комнаты
+//  2. Инициализирует инстанс Peer'а (WebRTC PeerConnection)
+//  3. Устанавливает слушатель отключения пира
+//  4. Подписывает нового участника на ВСЕ уже существующие треки в комнате
 func (r *Room) Join(peerID string, peerConfig PeerConfig) (*Peer, error) {
 	r.mu.Lock()
 
@@ -139,7 +139,7 @@ func (r *Room) Join(peerID string, peerConfig PeerConfig) (*Peer, error) {
 	return peer, nil
 }
 
-// Leave безопасно удаляет участника из комнаты и закрывает его соединение.
+// Leave безопасно удаляет участника из комнаты и закрывает его соединение
 func (r *Room) Leave(peerID string) {
 	r.mu.Lock()
 
@@ -153,7 +153,7 @@ func (r *Room) Leave(peerID string) {
 	delete(r.peers, peerID)
 	isEmpty := len(r.peers) == 0
 
-	// Обязательно снимаем lock ДО вызова peer.Close(),
+	// Обязательно снимаем lock ДО вызова peer.Close()
 	r.mu.Unlock()
 
 	// Закрываем Peer (также закроет PeerConnection и отправит клиенту уведомление)
@@ -195,7 +195,7 @@ func (r *Room) PeerCount() int {
 	return len(r.peers)
 }
 
-// Close закрывает комнату и принудительно отключает всех участников.
+// Close закрывает комнату и принудительно отключает всех участников
 func (r *Room) Close() {
 	r.closeOnce.Do(func() {
 		r.mu.Lock()
@@ -210,7 +210,7 @@ func (r *Room) Close() {
 
 		// Закрываем всех Peer'ов ВНЕ блокировки
 		// Архитектурная деталь для высоконагруженных систем:
-		// вызов I/O или тяжелых операций (например, сетевых) не должен происходить под Lock.
+		// вызов I/O или тяжелых операций (например, сетевых) не должен происходить под Lock
 		for id, peer := range peers {
 			peer.Close()
 			log.Printf("[Room] peer closed (room close): room=%s peer=%s", r.id, id)
@@ -224,14 +224,14 @@ func (r *Room) Close() {
 
 		log.Printf("[Room] closed: room=%s", r.id)
 
-		// Уведомляем систему уровнем выше (SFU Server), что данная комната мертва.
+		// Уведомляем систему уровнем выше (SFU Server), что данная комната мертва
 		if onClose != nil {
 			onClose(r.id)
 		}
 	})
 }
 
-// Stats возвращает статистику комнаты (кол-во участников и метрики роутера).
+// Stats возвращает статистику комнаты (кол-во участников и метрики роутера)
 func (r *Room) Stats() RoomStats {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -254,9 +254,9 @@ type RoomStats struct {
 
 // --- Внутренняя логика ---
 
-// onReceiverAdded работает как callback, который передаётся в Router.
+// onReceiverAdded работает как callback, который передаётся в Router
 // Срабатывает в тот момент, когда произвольный пользователь начал транслировать трек
-// (микрофон, камеру, скриншар). Здесь мы подписываем остальных пользователей на этот трек.
+// (микрофон, камеру, скриншар). Здесь мы подписываем остальных пользователей на этот трек
 func (r *Room) onReceiverAdded(receiver *Receiver) {
 	r.mu.RLock()
 
@@ -288,8 +288,8 @@ func (r *Room) onReceiverAdded(receiver *Receiver) {
 }
 
 // onReceiverRemoved — callback от Router, вызываемый при прекращении трансляции трека
-// (например, пользователь выключил камеру).
-// Отписывает всех активных пользователей от этого вымершего трека.
+// (например, пользователь выключил камеру)
+// Отписывает всех активных пользователей от этого вымершего трека
 func (r *Room) onReceiverRemoved(receiver *Receiver) {
 	r.mu.RLock()
 
@@ -340,7 +340,7 @@ func (r *Room) onPeerClosed(peerID string) {
 	log.Printf("[Room] peer disconnected: room=%s peer=%s peers=%d",
 		r.id, peerID, r.PeerCount())
 
-	// Если комната опустела — убиваем её, чтобы сэкономить ресурсы памяти SFU.
+	// Если комната опустела — убиваем её, чтобы сэкономить ресурсы памяти SFU
 	if isEmpty {
 		log.Printf("[Room] empty, closing: room=%s", r.id)
 		r.Close()

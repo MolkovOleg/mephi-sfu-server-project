@@ -18,7 +18,7 @@ const (
 
 // Пулл повторно используемых byte-слайсов для RTP-пакетов
 var rtpBufferPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		buf := make([]byte, maxRTPPacketSize)
 		return &buf
 	},
@@ -44,7 +44,7 @@ type PacketBuffer struct {
 
 // Пул для структур PacketBuffer
 var packetBufferPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &PacketBuffer{}
 	},
 }

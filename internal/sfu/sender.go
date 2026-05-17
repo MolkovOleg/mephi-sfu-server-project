@@ -154,9 +154,9 @@ func (s *Sender) writeLoop() {
 
 		case pkt := <-s.ch:
 			_, err := s.track.Write(pkt.data[:pkt.n])
-			senderPacketPool.Put(pkt)
 
 			if err != nil {
+				senderPacketPool.Put(pkt)
 				select {
 				case <-s.ctx.Done():
 					return
@@ -170,6 +170,9 @@ func (s *Sender) writeLoop() {
 			// Обновляем статистику
 			s.packetsSent.Add(1)
 			s.bytesSent.Add(uint64(pkt.n))
+
+			// Возвращаем пакет в пул ПОСЛЕ использования
+			senderPacketPool.Put(pkt)
 		}
 	}
 }

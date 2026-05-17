@@ -9,7 +9,11 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
-// Состнояе подлючения Peer'а
+// =============================================================================
+// Представление клиента (Peer)
+// =============================================================================
+
+// Состнояние подлючения Peer'а
 type PeerState int
 
 const (
@@ -151,6 +155,30 @@ func (p *Peer) HandleAnswer(answer webrtc.SessionDescription) error {
 // Обработка ICE-кандидат от клиента
 func (p *Peer) HandleCandidate(candidate webrtc.ICECandidateInit) error {
 	return p.pc.AddICECandidate(candidate)
+}
+
+// InitPublisher добавляет recvonly-транссиверы для аудио и видео.
+//
+// Должен вызываться ПОСЛЕ SetOnNegotiate(), чтобы сгенерированный offer
+// гарантированно дошёл до клиента. Добавление транссиверов триггерит
+// OnNegotiationNeeded в pion, что запускает negotiate() → offer → клиент.
+//
+// Клиент отвечает Answer'ом, включающим его камеру/микрофон,
+// которые затем попадают в Router через OnTrack.
+func (p *Peer) InitPublisher() error {
+	if _, err := p.pc.AddTransceiverFromKind(
+		webrtc.RTPCodecTypeAudio,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
+	); err != nil {
+		return err
+	}
+	if _, err := p.pc.AddTransceiverFromKind(
+		webrtc.RTPCodecTypeVideo,
+		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
+	); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Подписка данного Peer'а для получения трека

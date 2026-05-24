@@ -4,43 +4,43 @@ import (
 	"context"
 	"log"
 	"sync"
+
+	appmetrics "sfu-server/internal/metrics"
 )
 
 // =============================================================================
 // Маршрутизатор медиа-потоков внутри комнат
 // =============================================================================
 type Router struct {
-	// Структура:
-	//   receivers["trackA"] = {
-	//       ReceiverA
-	//   }
 	receivers map[string]*Receiver
-
-	// Структура:
-	//   senders["trackA"] = {
-	//       "peerB": SenderAB,  // Peer B получает трек A
-	//       "peerC": SenderAC,  // Peer C получает трек A
-	//   }
-	senders map[string]map[string]*Sender
+	senders   map[string]map[string]*Sender
+	// kinds хранит строковый тип трека ("audio"|"video") для hot-path метрик
+	// без повторных вызовов String() и map-lookup по receiver
+	kinds map[string]string
 
 	mu     sync.RWMutex
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	metrics *appmetrics.Metrics // nil если метрики отключены
 
 	// --- Callbacks ---
 	onReceiverAdded   func(receiver *Receiver)
 	onReceiverRemoved func(receiver *Receiver)
 }
 
-// Создание нового Router
-func NewRouter(ctx context.Context) *Router {
+// NewRouter создаёт маршрутизатор для одной комнаты.
+// m может быть nil — тогда метрики не собираются.
+func NewRouter(ctx context.Context, m *appmetrics.Metrics) *Router {
 	routerCtx, cancel := context.WithCancel(ctx)
 
 	return &Router{
 		receivers: make(map[string]*Receiver),
 		senders:   make(map[string]map[string]*Sender),
+		kinds:     make(map[string]string),
 		ctx:       routerCtx,
 		cancel:    cancel,
+		metrics:   m,
 	}
 }
 
@@ -52,11 +52,10 @@ func NewRouter(ctx context.Context) *Router {
 func (r *Router) AddReceiver(receiver *Receiver) {
 	r.mu.Lock()
 
-	// Сохраняем receiver в мапу
 	trackID := receiver.TrackID()
 	r.receivers[trackID] = receiver
+	r.kinds[trackID] = receiver.trackKind.String() // кешируем вид трека для hot-path
 
-	// Создаем мапу senders для данного трека, если еще нет
 	if r.senders[trackID] == nil {
 		r.senders[trackID] = make(map[string]*Sender)
 	}
@@ -66,15 +65,19 @@ func (r *Router) AddReceiver(receiver *Receiver) {
 	})
 
 	onAdded := r.onReceiverAdded
+	m := r.metrics
 
 	r.mu.Unlock()
+
+	if m != nil {
+		m.TrackAdded()
+	}
 
 	receiver.Start()
 
 	log.Printf("[Router] receiver added: track=%s stream=%s kind=%s",
 		receiver.trackID, receiver.streamID, receiver.trackKind)
 
-	// Вызываем вне блокировки для избежания DEADLOCK
 	if onAdded != nil {
 		onAdded(receiver)
 	}
@@ -90,7 +93,6 @@ func (r *Router) RemoveReceiver(trackID string) {
 		return
 	}
 
-	// Останавливаем все senders и очищаем мапу
 	if senders, ok := r.senders[trackID]; ok {
 		for peerID, sender := range senders {
 			sender.Stop()
@@ -100,13 +102,18 @@ func (r *Router) RemoveReceiver(trackID string) {
 		delete(r.senders, trackID)
 	}
 
-	// Останаваливаем receiver
 	receiver.Stop()
 	delete(r.receivers, trackID)
+	delete(r.kinds, trackID)
 
 	onRemoved := r.onReceiverRemoved
+	m := r.metrics
 
 	r.mu.Unlock()
+
+	if m != nil {
+		m.TrackRemoved()
+	}
 
 	log.Printf("[Router] receiver removed: track=%s", trackID)
 
@@ -210,7 +217,8 @@ func (r *Router) UnsubscribeAll(peerID string) {
 // Пересылка пакетов (Forwarding)
 // =============================================================================
 
-// Рассылка RTP-пакетов всем Sender, подписанным на трек
+// forward рассылает RTP-пакет всем Sender'ам, подписанным на трек.
+// Вызывается из горутины Receiver'а — критический hot-path.
 func (r *Router) forward(trackID string, buf *[]byte, n int) {
 	r.mu.RLock()
 
@@ -223,6 +231,14 @@ func (r *Router) forward(trackID string, buf *[]byte, n int) {
 	// Рассылаем пакеты всем подписчикам этого трека
 	for _, sender := range senders {
 		sender.WriteRTP(buf, n)
+	}
+
+	// Метрики обновляем раз на весь forward-цикл (не N раз)
+	if m := r.metrics; m != nil {
+		kind := r.kinds[trackID]
+		senderCount := len(senders)
+		m.RTPPacketsForwarded.WithLabelValues(kind).Add(float64(senderCount))
+		m.RTPBytesForwarded.WithLabelValues(kind).Add(float64(n * senderCount))
 	}
 
 	r.mu.RUnlock()

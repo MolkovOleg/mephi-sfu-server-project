@@ -2,9 +2,15 @@ package sfu
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"sync"
+
+	"github.com/pion/webrtc/v3"
+	"sfu-server/internal/cluster"
+	"sfu-server/internal/kafka"
+	appmetrics "sfu-server/internal/metrics"
 )
 
 // =============================================================================
@@ -28,36 +34,42 @@ func DefaultRoomConfig() RoomConfig {
 	}
 }
 
-// Room — представление одной конференции (комнаты) в SFU сервере
 type Room struct {
-	id        string
-	router    *Router
-	peers     map[string]*Peer
-	mu        sync.RWMutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-	closeOnce sync.Once
-	config    RoomConfig
-	onClose   func(roomID string)
+	id             string
+	router         *Router
+	peers          map[string]*Peer
+	cascadeBridges map[string]*CascadeBridge
+	cascadeMu      sync.RWMutex
+	mu             sync.RWMutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	closeOnce      sync.Once
+	config         RoomConfig
+	onClose        func(roomID string)
+	metrics        *appmetrics.Metrics
+	kafkaProducer  *kafka.AsyncProducer
 }
 
-// NewRoom создаёт новую инстанцию комнаты
-func NewRoom(ctx context.Context, id string, config RoomConfig) *Room {
+// NewRoom создаёт инстанцию комнаты с маршрутизатором.
+// m может быть nil — тогда метрики не собираются.
+func NewRoom(ctx context.Context, id string, config RoomConfig, m *appmetrics.Metrics, kp *kafka.AsyncProducer) *Room {
 	roomCtx, cancel := context.WithCancel(ctx)
 
-	// Создаём отдельный маршрутизатор для этой комнаты
-	router := NewRouter(roomCtx)
+	// Передаём метрики в Router — он инструментирован для hot-path
+	router := NewRouter(roomCtx, m)
 
 	room := &Room{
-		id:     id,
-		router: router,
-		peers:  make(map[string]*Peer),
-		ctx:    roomCtx,
-		cancel: cancel,
-		config: config,
+		id:             id,
+		router:         router,
+		peers:          make(map[string]*Peer),
+		cascadeBridges: make(map[string]*CascadeBridge),
+		ctx:            roomCtx,
+		cancel:         cancel,
+		config:         config,
+		metrics:        m,
+		kafkaProducer:  kp,
 	}
 
-	// Настраиваем логику автоподписки/отписки:
 	router.SetOnReceiverAdded(room.onReceiverAdded)
 	router.SetOnReceiverRemoved(room.onReceiverRemoved)
 
@@ -133,6 +145,10 @@ func (r *Room) Join(peerID string, peerConfig PeerConfig) (*Peer, error) {
 		}
 	}
 
+	if r.kafkaProducer != nil {
+		r.kafkaProducer.Emit(kafka.EventPeerJoined, r.id, peerID, nil)
+	}
+
 	log.Printf("[Room] peer joined: room=%s peer=%s peers=%d",
 		r.id, peerID, r.PeerCount())
 
@@ -152,6 +168,10 @@ func (r *Room) Leave(peerID string) {
 	// Удаляем пира из стейта комнаты
 	delete(r.peers, peerID)
 	isEmpty := len(r.peers) == 0
+
+	if r.kafkaProducer != nil {
+		r.kafkaProducer.Emit(kafka.EventPeerLeft, r.id, peerID, nil)
+	}
 
 	// Обязательно снимаем lock ДО вызова peer.Close()
 	r.mu.Unlock()
@@ -208,12 +228,22 @@ func (r *Room) Close() {
 
 		r.mu.Unlock()
 
-		// Закрываем всех Peer'ов ВНЕ блокировки
+		// Закрываем все Peer'ов ВНЕ блокировки
 		// Архитектурная деталь для высоконагруженных систем:
 		// вызов I/O или тяжелых операций (например, сетевых) не должен происходить под Lock
 		for id, peer := range peers {
 			peer.Close()
 			log.Printf("[Room] peer closed (room close): room=%s peer=%s", r.id, id)
+		}
+
+		// Закрываем все каскадные мосты
+		r.cascadeMu.Lock()
+		bridges := r.cascadeBridges
+		r.cascadeBridges = make(map[string]*CascadeBridge)
+		r.cascadeMu.Unlock()
+
+		for _, bridge := range bridges {
+			bridge.Close()
 		}
 
 		// Останавливаем маршрутизатор
@@ -285,6 +315,58 @@ func (r *Room) onReceiverAdded(receiver *Receiver) {
 
 	log.Printf("[Room] auto-subscribed %d peers to new track: room=%s track=%s owner=%s",
 		len(peersToSubscribe), r.id, trackID, ownerID)
+
+	if r.kafkaProducer != nil {
+		r.kafkaProducer.Emit(kafka.EventTrackPublished, r.id, ownerID, map[string]string{
+			"track_id":   trackID,
+			"stream_id":  receiver.StreamID(),
+			"track_kind": receiver.Kind().String(),
+		})
+	}
+
+	// Ретранслируем трек на другие ноды через каскадные мосты
+	r.cascadeMu.RLock()
+	bridges := make([]*CascadeBridge, 0, len(r.cascadeBridges))
+	for _, bridge := range r.cascadeBridges {
+		bridges = append(bridges, bridge)
+	}
+	r.cascadeMu.RUnlock()
+
+	for _, bridge := range bridges {
+		// Предотвращаем петли: не отправляем трек обратно на ту же ноду, откуда он каскадирован
+		if ownerID == "cascade-"+bridge.remoteNodeID {
+			continue
+		}
+		_ = bridge.AddTrack(trackID)
+	}
+}
+
+// AddCascadeBridge регистрирует новый каскадный мост для комнаты
+func (r *Room) AddCascadeBridge(remoteNodeID string, bridge *CascadeBridge) {
+	r.cascadeMu.Lock()
+	defer r.cascadeMu.Unlock()
+	r.cascadeBridges[remoteNodeID] = bridge
+}
+
+// RemoveCascadeBridge удаляет и закрывает каскадный мост
+func (r *Room) RemoveCascadeBridge(remoteNodeID string) {
+	r.cascadeMu.Lock()
+	defer r.cascadeMu.Unlock()
+	if bridge, ok := r.cascadeBridges[remoteNodeID]; ok {
+		bridge.Close()
+		delete(r.cascadeBridges, remoteNodeID)
+	}
+}
+
+// GetCascadeBridges возвращает список всех каскадных мостов комнаты
+func (r *Room) GetCascadeBridges() []*CascadeBridge {
+	r.cascadeMu.RLock()
+	defer r.cascadeMu.RUnlock()
+	var list []*CascadeBridge
+	for _, bridge := range r.cascadeBridges {
+		list = append(list, bridge)
+	}
+	return list
 }
 
 // onReceiverRemoved — callback от Router, вызываемый при прекращении трансляции трека
@@ -316,6 +398,12 @@ func (r *Room) onReceiverRemoved(receiver *Receiver) {
 
 	log.Printf("[Room] auto-unsubscribed %d peers from removed track: room=%s track=%s",
 		len(peersToUnsubscribe), r.id, trackID)
+
+	if r.kafkaProducer != nil {
+		r.kafkaProducer.Emit(kafka.EventTrackUnpublished, r.id, ownerID, map[string]string{
+			"track_id": trackID,
+		})
+	}
 }
 
 // onPeerClosed — служебный callback, вызываемый когда Peer(клиент) отваливается
@@ -335,6 +423,10 @@ func (r *Room) onPeerClosed(peerID string) {
 	delete(r.peers, peerID)
 	isEmpty := len(r.peers) == 0
 
+	if r.kafkaProducer != nil {
+		r.kafkaProducer.Emit(kafka.EventPeerLeft, r.id, peerID, nil)
+	}
+
 	r.mu.Unlock()
 
 	log.Printf("[Room] peer disconnected: room=%s peer=%s peers=%d",
@@ -346,3 +438,74 @@ func (r *Room) onPeerClosed(peerID string) {
 		r.Close()
 	}
 }
+
+// HandleClusterMessage обрабатывает входящие каскадные сообщения от другой ноды
+func (r *Room) HandleClusterMessage(msg cluster.ClusterMessage, localNodeID string, rdb *cluster.RedisClient) {
+	r.cascadeMu.Lock()
+	bridge, ok := r.cascadeBridges[msg.FromNodeID]
+	r.cascadeMu.Unlock()
+
+	switch msg.Type {
+	case cluster.TypeCascadeOffer:
+		if !ok {
+			log.Printf("[Room] creating cascade bridge for incoming offer from node %s: room=%s",
+				msg.FromNodeID, r.id)
+			var err error
+			// Создаем пассивный мост (isInitiator = false)
+			bridge, err = NewCascadeBridge(r.ctx, r.id, localNodeID, msg.FromNodeID, rdb, r.router, false)
+			if err != nil {
+				log.Printf("[Room] failed to create cascade bridge: %v", err)
+				return
+			}
+			r.AddCascadeBridge(msg.FromNodeID, bridge)
+
+			// Подписываемся на ВСЕ существующие локальные треки в комнате, чтобы отправить их новой ноде!
+			// ВАЖНО: это позволяет новой ноде получить все треки, которые уже были запущены!
+			for _, recv := range r.router.GetReceivers() {
+				if recv.OwnerPeerID() != "cascade-"+msg.FromNodeID {
+					_ = bridge.AddTrack(recv.TrackID())
+				}
+			}
+		}
+
+		// Обрабатываем предложение (SDP Offer)
+		answerSDP, err := bridge.HandleOffer(msg.SDP)
+		if err != nil {
+			log.Printf("[Room] HandleOffer error: %v", err)
+			return
+		}
+
+		// Отправляем ответ (SDP Answer) обратно через Redis Pub/Sub
+		replyMsg := cluster.ClusterMessage{
+			Type:       cluster.TypeCascadeAnswer,
+			RoomID:     r.id,
+			FromNodeID: localNodeID,
+			SDP:        answerSDP,
+			SDPType:    "answer",
+		}
+		replyData, _ := json.Marshal(replyMsg)
+		_ = rdb.PublishPubSubMessage(r.ctx, msg.FromNodeID, replyData)
+
+	case cluster.TypeCascadeAnswer:
+		if ok {
+			err := bridge.HandleAnswer(msg.SDP)
+			if err != nil {
+				log.Printf("[Room] HandleAnswer error: %v", err)
+			}
+		}
+
+	case cluster.TypeCascadeCandidate:
+		if ok {
+			candidateInit := webrtc.ICECandidateInit{
+				Candidate:     msg.Candidate,
+				SDPMid:        &msg.SDPMid,
+				SDPMLineIndex: &msg.SDPMLineIdx,
+			}
+			err := bridge.HandleCandidate(candidateInit)
+			if err != nil {
+				log.Printf("[Room] HandleCandidate error: %v", err)
+			}
+		}
+	}
+}
+

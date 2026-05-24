@@ -1,6 +1,7 @@
 package sfu
 
 import (
+	"os"
 	"sync"
 )
 
@@ -26,11 +27,18 @@ var rtpBufferPool = sync.Pool{
 
 // Возвращает буфер из пула для чтение RTP-пакетов
 func GetRTPBuffer() *[]byte {
+	if os.Getenv("DISABLE_BUFFER_POOL") == "true" {
+		buf := make([]byte, maxRTPPacketSize)
+		return &buf
+	}
 	return rtpBufferPool.Get().(*[]byte)
 }
 
 // Возвращает буфер в пул для повторного использования
 func PutRTPBuffer(buf *[]byte) {
+	if os.Getenv("DISABLE_BUFFER_POOL") == "true" {
+		return
+	}
 	rtpBufferPool.Put(buf)
 }
 
@@ -51,6 +59,12 @@ var packetBufferPool = sync.Pool{
 
 // Возвращает PacketBuffer из пула
 func GetPacketBuffer() *PacketBuffer {
+	if os.Getenv("DISABLE_BUFFER_POOL") == "true" {
+		pb := &PacketBuffer{}
+		pb.Data = GetRTPBuffer()
+		pb.N = 0
+		return pb
+	}
 	pb := packetBufferPool.Get().(*PacketBuffer)
 	pb.Data = GetRTPBuffer()
 	pb.N = 0
@@ -59,6 +73,9 @@ func GetPacketBuffer() *PacketBuffer {
 
 // Возвращает PacketBuffer и его Data-буфер в соотвествующие пулы
 func PutPacketBuffer(pb *PacketBuffer) {
+	if os.Getenv("DISABLE_BUFFER_POOL") == "true" {
+		return
+	}
 	if pb.Data != nil {
 		PutRTPBuffer(pb.Data)
 		pb.Data = nil

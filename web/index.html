@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="ru">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            name="description"
+            content="MEPhI SFU Server — тестовый WebRTC клиент для проверки медиасервера"
+        />
+        <title>SFU — Тестовый клиент</title>
+
+        <!-- Google Font: Inter -->
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+            rel="stylesheet"
+        />
+
+        <link rel="stylesheet" href="style.css" />
+    </head>
+    <body>
+        <!-- ───────────────── Header ───────────────── -->
+        <header id="app-header">
+            <div class="header-brand">
+                <div class="logo-icon">
+                    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                        <circle
+                            cx="14"
+                            cy="14"
+                            r="12"
+                            stroke="url(#grad-logo)"
+                            stroke-width="2.5"
+                            fill="none"
+                        />
+                        <circle cx="14" cy="14" r="5" fill="url(#grad-logo)" />
+                        <circle cx="14" cy="6" r="2" fill="var(--accent)" />
+                        <circle
+                            cx="21"
+                            cy="18"
+                            r="2"
+                            fill="var(--accent-secondary)"
+                        />
+                        <circle
+                            cx="7"
+                            cy="18"
+                            r="2"
+                            fill="var(--accent-tertiary)"
+                        />
+                        <defs>
+                            <linearGradient
+                                id="grad-logo"
+                                x1="0"
+                                y1="0"
+                                x2="28"
+                                y2="28"
+                            >
+                                <stop offset="0%" stop-color="var(--accent)" />
+                                <stop
+                                    offset="100%"
+                                    stop-color="var(--accent-secondary)"
+                                />
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                </div>
+                <div>
+                    <h1>MEPhI SFU</h1>
+                    <span class="header-subtitle">WebRTC Test Client</span>
+                </div>
+            </div>
+            <div class="header-status">
+                <div class="status-chip" id="ws-status-chip">
+                    <span class="status-dot" id="ws-status-dot"></span>
+                    <span id="ws-status-text">Отключено</span>
+                </div>
+                <div class="status-chip" id="rtc-status-chip">
+                    <span class="status-dot" id="rtc-status-dot"></span>
+                    <span id="rtc-status-text">WebRTC: —</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- ───────────────── Main Layout ───────────────── -->
+        <main id="app-main">
+            <!-- Left Panel: Controls -->
+            <aside id="panel-controls">
+                <!-- Connection Settings -->
+                <section class="panel-section" id="section-connection">
+                    <h2 class="section-title">
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="currentColor"
+                        >
+                            <path
+                                d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11zM7.25 4v4.5l3.5 2.1.75-1.23-2.75-1.63V4h-1.5z"
+                            />
+                        </svg>
+                        Подключение
+                    </h2>
+                    <div class="form-group">
+                        <label for="input-ws-url">WebSocket URL</label>
+                        <input
+                            type="text"
+                            id="input-ws-url"
+                            value="ws://localhost:8080/ws"
+                            placeholder="ws://host:port/ws"
+                            autocomplete="off"
+                        />
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="input-room-id">Комната</label>
+                            <input
+                                type="text"
+                                id="input-room-id"
+                                value="test-room"
+                                placeholder="room-id"
+                                autocomplete="off"
+                            />
+                        </div>
+                        <div class="form-group">
+                            <label for="input-peer-id">Peer ID</label>
+                            <input
+                                type="text"
+                                id="input-peer-id"
+                                placeholder="auto"
+                                autocomplete="off"
+                            />
+                        </div>
+                    </div>
+                    <div class="btn-group">
+                        <button id="btn-connect" class="btn btn-primary">
+                            <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 14 14"
+                                fill="currentColor"
+                            >
+                                <path
+                                    d="M7 0L5.6 1.4 9.2 5H0v2h9.2L5.6 10.6 7 12l5-5z"
+                                />
+                            </svg>
+                            Подключиться
+                        </button>
+                        <button
+                            id="btn-disconnect"
+                            class="btn btn-danger"
+                            disabled
+                        >
+                            <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 14 14"
+                                fill="currentColor"
+                            >
+                                <path
+                                    d="M12 0H2C.9 0 0 .9 0 2v10c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V2c0-1.1-.9-2-2-2z"
+                                />
+                            </svg>
+                            Отключиться
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Media Settings -->
+                <section class="panel-section" id="section-media">
+                    <h2 class="section-title">
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="currentColor"
+                        >
+                            <path
+                                d="M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 1a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"
+                            />
+                            <path
+                                d="M2 4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H4z"
+                            />
+                        </svg>
+                        Медиа
+                    </h2>
+                    <div class="toggle-row">
+                        <label class="toggle-label" for="toggle-video"
+                            >Видео</label
+                        >
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="toggle-video" checked />
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="toggle-row">
+                        <label class="toggle-label" for="toggle-audio"
+                            >Аудио</label
+                        >
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="toggle-audio" checked />
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label for="select-video-device">Камера</label>
+                        <select id="select-video-device">
+                            <option value="">По умолчанию</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="select-resolution">Разрешение</label>
+                        <select id="select-resolution">
+                            <option value="320x240">320×240 (QVGA)</option>
+                            <option value="640x480" selected>
+                                640×480 (VGA)
+                            </option>
+                            <option value="1280x720">1280×720 (HD)</option>
+                            <option value="1920x1080">
+                                1920×1080 (Full HD)
+                            </option>
+                        </select>
+                    </div>
+                </section>
+
+                <!-- Stats -->
+                <section class="panel-section" id="section-stats">
+                    <h2 class="section-title">
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="currentColor"
+                        >
+                            <path
+                                d="M1 11a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-3zm5-4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V7zm5-5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V2z"
+                            />
+                        </svg>
+                        Статистика
+                    </h2>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-value" id="stat-ice-state"
+                                >—</span
+                            >
+                            <span class="stat-label">ICE</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="stat-dtls-state"
+                                >—</span
+                            >
+                            <span class="stat-label">DTLS</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="stat-bytes-sent"
+                                >0</span
+                            >
+                            <span class="stat-label">Отправлено</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="stat-bytes-recv"
+                                >0</span
+                            >
+                            <span class="stat-label">Получено</span>
+                        </div>
+                    </div>
+                </section>
+            </aside>
+
+            <!-- Center: Video Grid -->
+            <section id="panel-video">
+                <div id="video-grid">
+                    <div class="video-tile video-tile-local" id="tile-local">
+                        <video
+                            id="local-video"
+                            autoplay
+                            muted
+                            playsinline
+                        ></video>
+                        <div class="video-label">
+                            <span class="video-label-dot"></span>
+                            Локальное видео
+                        </div>
+                        <div class="video-no-stream" id="local-no-stream">
+                            <svg
+                                width="48"
+                                height="48"
+                                viewBox="0 0 48 48"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                            >
+                                <rect
+                                    x="6"
+                                    y="10"
+                                    width="36"
+                                    height="24"
+                                    rx="3"
+                                />
+                                <polygon points="42,16 48,12 48,34 42,30" />
+                                <line
+                                    x1="6"
+                                    y1="10"
+                                    x2="42"
+                                    y2="34"
+                                    stroke-width="2"
+                                />
+                            </svg>
+                            <span>Камера не активна</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Panel: Log -->
+            <aside id="panel-log">
+                <div class="panel-log-header">
+                    <h2 class="section-title">
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="currentColor"
+                        >
+                            <path
+                                d="M0 2a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H2z"
+                            />
+                            <path
+                                d="M3 4h10v1H3V4zm0 3h7v1H3V7zm0 3h10v1H3v-1z"
+                            />
+                        </svg>
+                        Протокол
+                    </h2>
+                    <button
+                        class="btn btn-ghost btn-sm"
+                        id="btn-clear-log"
+                        title="Очистить лог"
+                    >
+                        <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 14 14"
+                            fill="currentColor"
+                        >
+                            <path
+                                d="M5.5 1a.5.5 0 0 0-.5.5V2H1.5a.5.5 0 0 0 0 1H2v9a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V3h.5a.5.5 0 0 0 0-1H9v-.5A.5.5 0 0 0 8.5 1h-3zM5 2V1.5h4V2H5zM3 3h8v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3z"
+                            />
+                        </svg>
+                    </button>
+                </div>
+                <div class="log-filters">
+                    <button class="log-filter active" data-filter="all">
+                        Все
+                    </button>
+                    <button class="log-filter" data-filter="ws">WS</button>
+                    <button class="log-filter" data-filter="rtc">RTC</button>
+                    <button class="log-filter" data-filter="media">
+                        Media
+                    </button>
+                    <button class="log-filter" data-filter="error">
+                        Ошибки
+                    </button>
+                </div>
+                <div id="log-container"></div>
+            </aside>
+        </main>
+
+        <script src="client.js"></script>
+    </body>
+</html>

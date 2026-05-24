@@ -1,0 +1,33 @@
+# =============================================================================
+# MEPhI SFU Server — Конфиг для нагрузочного тестирования
+# =============================================================================
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: 30s
+  write_timeout: 30s
+  max_conns: 0           # без лимита — тест сам найдёт предел
+
+sfu:
+  max_rooms: 0
+  max_peers_per_room: 0
+  pli_interval: 2s
+  sender_buf_size: 256   # больший буфер под нагрузку
+
+ice:
+  stun_servers:
+    - "stun:stun.l.google.com:19302"
+  turn_servers: []
+
+cluster:
+  enabled: false
+  redis_addr: "localhost:6379"
+
+# Включаем метрики — Prometheus будет скрейпить /metrics
+metrics:
+  enabled: true
+  port: 9091             # не используется (метрики на :8080/metrics через signal server)
+
+log:
+  level: "warn"          # только предупреждения и ошибки — снижаем лог-шум под нагрузкой

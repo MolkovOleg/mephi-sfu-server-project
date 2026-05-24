@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stretchr/testify/assert/yaml"
@@ -33,12 +34,33 @@ import (
 
 // Конфигурация проекта
 type Config struct {
-	Server  ServerConfig  `yaml:"server"`
-	SFU     SFUConfig     `yaml:"sfu"`
-	ICE     ICEConfig     `yaml:"ice"`
-	Cluster ClusterConfig `yaml:"cluster"`
-	Metrics MetricsConfig `yaml:"metrics"`
-	Log     LogConfig     `yaml:"log"`
+	Server     ServerConfig     `yaml:"server"`
+	SFU        SFUConfig        `yaml:"sfu"`
+	ICE        ICEConfig        `yaml:"ice"`
+	Cluster    ClusterConfig    `yaml:"cluster"`
+	Metrics    MetricsConfig    `yaml:"metrics"`
+	Kafka      KafkaConfig      `yaml:"kafka"`
+	TurnServer TurnServerConfig `yaml:"turn_server"`
+	Log        LogConfig        `yaml:"log"`
+}
+
+// Конфигурация встроенного TURN-сервера
+type TurnServerConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	PublicIP     string `yaml:"public_ip"`
+	Port         int    `yaml:"port"`
+	Realm        string `yaml:"realm"`
+	StaticSecret string `yaml:"static_secret"`
+	MinPort      int    `yaml:"min_port"`
+	MaxPort      int    `yaml:"max_port"`
+}
+
+// Конфигурация брокера событий Kafka
+type KafkaConfig struct {
+	Enabled    bool     `yaml:"enabled"`
+	Brokers    []string `yaml:"brokers"`
+	Topic      string   `yaml:"topic"`
+	BufferSize int      `yaml:"buffer_size"`
 }
 
 // Конфигурация HTTP/WebSocket сервера
@@ -87,6 +109,7 @@ type ClusterConfig struct {
 	NodeID            string        `yaml:"node_id"`
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
 	NodeTTL           time.Duration `yaml:"node_ttl"`
+	EnableCascading   bool          `yaml:"enable_cascading"`
 }
 
 // Конфигурация метрик (Prometheus)
@@ -130,10 +153,26 @@ func Default() *Config {
 			RedisDB:           0,
 			HeartbeatInterval: 10 * time.Second,
 			NodeTTL:           30 * time.Second,
+			EnableCascading:   true,
 		},
 		Metrics: MetricsConfig{
 			Enabled: false,
 			Port:    9091,
+		},
+		Kafka: KafkaConfig{
+			Enabled:    false,
+			Brokers:    []string{"localhost:9092"},
+			Topic:      "sfu-events",
+			BufferSize: 1000,
+		},
+		TurnServer: TurnServerConfig{
+			Enabled:      false,
+			PublicIP:     "127.0.0.1",
+			Port:         3478,
+			Realm:        "mephi-sfu",
+			StaticSecret: "mephi-sfu-secret-key-2026",
+			MinPort:      49152,
+			MaxPort:      65535,
 		},
 		Log: LogConfig{
 			Level: "info",
@@ -211,6 +250,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("CLUSTER_NODE_ID"); v != "" {
 		cfg.Cluster.NodeID = v
 	}
+	if v := os.Getenv("CLUSTER_ENABLE_CASCADING"); v != "" {
+		cfg.Cluster.EnableCascading = v == "true" || v == "1" || v == "yes"
+	}
 
 	// Metrics
 	if v := os.Getenv("METRICS_ENABLED"); v != "" {
@@ -219,6 +261,51 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("METRICS_PORT"); v != "" {
 		if p, err := strconv.Atoi(v); err == nil {
 			cfg.Metrics.Port = p
+		}
+	}
+
+	// Kafka
+	if v := os.Getenv("KAFKA_ENABLED"); v != "" {
+		cfg.Kafka.Enabled = v == "true" || v == "1" || v == "yes"
+	}
+	if v := os.Getenv("KAFKA_BROKERS"); v != "" {
+		cfg.Kafka.Brokers = strings.Split(v, ",")
+	}
+	if v := os.Getenv("KAFKA_TOPIC"); v != "" {
+		cfg.Kafka.Topic = v
+	}
+	if v := os.Getenv("KAFKA_BUFFER_SIZE"); v != "" {
+		if size, err := strconv.Atoi(v); err == nil {
+			cfg.Kafka.BufferSize = size
+		}
+	}
+
+	// TURN Server
+	if v := os.Getenv("TURN_ENABLED"); v != "" {
+		cfg.TurnServer.Enabled = v == "true" || v == "1" || v == "yes"
+	}
+	if v := os.Getenv("TURN_PUBLIC_IP"); v != "" {
+		cfg.TurnServer.PublicIP = v
+	}
+	if v := os.Getenv("TURN_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			cfg.TurnServer.Port = port
+		}
+	}
+	if v := os.Getenv("TURN_REALM"); v != "" {
+		cfg.TurnServer.Realm = v
+	}
+	if v := os.Getenv("TURN_STATIC_SECRET"); v != "" {
+		cfg.TurnServer.StaticSecret = v
+	}
+	if v := os.Getenv("TURN_MIN_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			cfg.TurnServer.MinPort = port
+		}
+	}
+	if v := os.Getenv("TURN_MAX_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			cfg.TurnServer.MaxPort = port
 		}
 	}
 

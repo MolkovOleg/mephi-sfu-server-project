@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 2s
+  evaluation_interval: 2s
+
+scrape_configs:
+  # Метрики распределенных нод WebRTC SFU кластера
+  - job_name: 'sfu-cluster'
+    static_configs:
+      - targets:
+          - 'sfu-node-1:8080'
+          - 'sfu-node-2:8080'
+    metrics_path: '/metrics'
+    scrape_timeout: 2s
+
+  # Метрики нагрузочного генератора (запущенного на хосте или в контейнере)
+  - job_name: 'loadtest-client'
+    static_configs:
+      - targets:
+          - 'host.docker.internal:9092'
+          - 'sfu-loadtest:9092'
+    metrics_path: '/metrics'
+    scrape_timeout: 2s
+    honor_labels: true

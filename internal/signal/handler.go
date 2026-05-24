@@ -219,6 +219,24 @@ func (s *Session) handleJoin(raw json.RawMessage) {
 		return
 	}
 
+	// Проверяем распределенную маршрутизацию комнат в кластере
+	if s.server.ClusterEnabled() && !s.server.ClusterEnableCascading() {
+		nodeAddr, isLocal, err := s.server.LookupRoomNode(payload.RoomID)
+		if err != nil {
+			log.Printf("[Session] LookupRoomNode error: room=%s err=%v", payload.RoomID, err)
+		} else if !isLocal {
+			log.Printf("[Session] redirecting peer=%s to remote node %s for room=%s",
+				payload.PeerID, nodeAddr, payload.RoomID)
+			
+			redirectMsg, err := NewRedirectMessage("ws://" + nodeAddr + "/ws")
+			if err == nil {
+				s.sendMessage(redirectMsg)
+			}
+			go s.close()
+			return
+		}
+	}
+
 	// Получаем или создаем комнату
 	room, err := s.server.GetOrCreateRoom(payload.RoomID, sfu.DefaultRoomConfig())
 	if err != nil {

@@ -5,6 +5,11 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"time"
+
+	"sfu-server/internal/cluster"
+	"sfu-server/internal/kafka"
+	appmetrics "sfu-server/internal/metrics"
 )
 
 // =============================================================================
@@ -20,9 +25,16 @@ var (
 
 // Конфигурацяи сервера SFU
 type ServerConfig struct {
-	MaxRooms          int        // Максимальное кол-во комнат на данном сервере
-	DefaultRoomConfig RoomConfig // Настройка комнаты по умолчанию
-	DefaultPeerConfig PeerConfig // Настройка пиров по умолчанию
+	MaxRooms          int                 // Максимальное кол-во комнат на данном сервере
+	DefaultRoomConfig RoomConfig          // Настройка комнаты по умолчанию
+	DefaultPeerConfig PeerConfig          // Настройка пиров по умолчанию
+	Metrics           *appmetrics.Metrics // nil — метрики отключены
+	KafkaProducer     *kafka.AsyncProducer
+
+	ClusterEnabled         bool
+	ClusterEnableCascading bool
+	ClusterNode            *cluster.ClusterNode
+	RoomRouter             *cluster.RoomRouter
 }
 
 // Установка конфигурации сервера SFU по умолчанию
@@ -37,15 +49,20 @@ func DefaultServerConfig() ServerConfig {
 // Центральный объект медиасервера (SFUServer)
 // Управляет реестром комнат и обеспечивает общий жизненный цикл
 type SFUServer struct {
-	rooms map[string]*Room // реестр активных комнат
-	mu    sync.RWMutex     // потокобезопасность для работы с комнатами
+	rooms map[string]*Room
+	mu    sync.RWMutex
 
-	// для работы с контекстом
-	ctx       context.Context
-	cancel    context.CancelFunc
-	closeOnce sync.Once
-	closed    bool
-	config    ServerConfig
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	closeOnce              sync.Once
+	closed                 bool
+	config                 ServerConfig
+	metrics                *appmetrics.Metrics
+	kafkaProducer          *kafka.AsyncProducer
+	clusterEnabled         bool
+	clusterEnableCascading bool
+	clusterNode            *cluster.ClusterNode
+	roomRouter             *cluster.RoomRouter
 }
 
 // Создание нового сервера SFU
@@ -53,13 +70,20 @@ func NewSFUServer(ctx context.Context, config ServerConfig) *SFUServer {
 	serverCtx, cancel := context.WithCancel(ctx)
 
 	server := &SFUServer{
-		rooms:  make(map[string]*Room),
-		ctx:    serverCtx,
-		cancel: cancel,
-		config: config,
+		rooms:                  make(map[string]*Room),
+		ctx:                    serverCtx,
+		cancel:                 cancel,
+		config:                 config,
+		metrics:                config.Metrics,
+		kafkaProducer:          config.KafkaProducer,
+		clusterEnabled:         config.ClusterEnabled,
+		clusterEnableCascading: config.ClusterEnableCascading,
+		clusterNode:            config.ClusterNode,
+		roomRouter:             config.RoomRouter,
 	}
 
-	log.Printf("[SFUServer] created: maxRooms=%d", config.MaxRooms)
+	log.Printf("[SFUServer] created: maxRooms=%d clusterEnabled=%v enableCascading=%v",
+		config.MaxRooms, config.ClusterEnabled, config.ClusterEnableCascading)
 
 	return server
 }
@@ -95,19 +119,46 @@ func (s *SFUServer) CreateRoom(roomID string, config RoomConfig) (*Room, error) 
 		return nil, ErrRoomAlreadyExists
 	}
 
-	// Создаем комнату
-	room := NewRoom(s.ctx, roomID, config)
+	// Создаем комнату с метриками
+	room := NewRoom(s.ctx, roomID, config, s.metrics, s.kafkaProducer)
 
-	// Устанавливаем callback для автоматического удаления комнаты из реестра
-	// при ее закрытии (последний участник вышел или прнудительное завершение)
 	room.SetOnClose(func(id string) {
 		s.onRoomClosed(id)
 	})
 
-	// Регистрируем комнату
-	s.rooms[roomID] = room
+	if s.clusterEnabled && s.roomRouter != nil && s.clusterNode != nil {
+		// Проверяем владельца в Redis перед регистрацией
+		ownerNodeID, err := s.roomRouter.GetNodeForRoom(s.ctx, roomID)
+		if err == nil && ownerNodeID != s.clusterNode.NodeID() {
+			// Мы выступаем в роли Guest Node
+			log.Printf("[SFUServer] room %s belongs to remote node %s, creating Guest Room and initiating cascade", roomID, ownerNodeID)
+			bridge, err := NewCascadeBridge(s.ctx, roomID, s.clusterNode.NodeID(), ownerNodeID, s.clusterNode.RedisClient(), room.router, true)
+			if err != nil {
+				log.Printf("[SFUServer] failed to create active cascade bridge to %s: %v", ownerNodeID, err)
+			} else {
+				room.AddCascadeBridge(ownerNodeID, bridge)
+				// Запускаем переговорный процесс
+				go bridge.negotiate()
+			}
+		} else {
+			// Мы владелец комнаты, регистрируем на себя
+			err := s.roomRouter.RegisterRoom(s.ctx, roomID, s.clusterNode.NodeID(), 2*time.Minute)
+			if err != nil {
+				log.Printf("[SFUServer] failed to register room %s in cluster: %v", roomID, err)
+			}
+		}
+	}
 
+	s.rooms[roomID] = room
 	s.mu.Unlock()
+
+	if s.metrics != nil {
+		s.metrics.RoomCreated()
+	}
+
+	if s.kafkaProducer != nil {
+		s.kafkaProducer.Emit(kafka.EventRoomCreated, roomID, "", nil)
+	}
 
 	log.Printf("[SFUServer] room created: room=%s rooms=%d", roomID, s.RoomsCount())
 
@@ -245,17 +296,95 @@ type ServerStats struct {
 func (s *SFUServer) onRoomClosed(roomID string) {
 	s.mu.Lock()
 
-	// Проверка наличия данной комнаты
 	_, ok := s.rooms[roomID]
 	if !ok {
 		s.mu.Unlock()
 		return
 	}
 
-	// Удаляем из реестра
 	delete(s.rooms, roomID)
-
 	s.mu.Unlock()
 
+	if s.clusterEnabled && s.roomRouter != nil {
+		// Разрегистрируем комнату в Redis
+		err := s.roomRouter.UnregisterRoom(s.ctx, roomID)
+		if err != nil {
+			log.Printf("[SFUServer] failed to unregister room %s from cluster: %v", roomID, err)
+		}
+	}
+
+	if s.metrics != nil {
+		s.metrics.RoomClosed()
+	}
+
+	if s.kafkaProducer != nil {
+		s.kafkaProducer.Emit(kafka.EventRoomClosed, roomID, "", nil)
+	}
+
 	log.Printf("[SFUServer] room removed from registry: room=%s rooms=%d", roomID, s.RoomsCount())
+}
+
+// Метод сообщает, включена ли кластеризация на сервере
+func (s *SFUServer) ClusterEnabled() bool {
+	return s.clusterEnabled
+}
+
+// ClusterEnableCascading сообщает, включено ли каскадирование медиа-потоков
+func (s *SFUServer) ClusterEnableCascading() bool {
+	return s.clusterEnableCascading
+}
+
+// Метод ищет комнату в кластере и возвращает ее адрес перенаправления,
+// флаг isLocal (находится ли комната на текущей ноде) и ошибку
+func (s *SFUServer) LookupRoomNode(roomID string) (addr string, isLocal bool, err error) {
+	if !s.clusterEnabled || s.roomRouter == nil || s.clusterNode == nil {
+		return "", true, nil
+	}
+
+	nodeID, err := s.roomRouter.GetNodeForRoom(s.ctx, roomID)
+	if err != nil {
+		if errors.Is(err, cluster.ErrRoomMappingNotFound) {
+			// Комнаты еще нет в реестре, значит, она будет создана локально
+			return "", true, nil
+		}
+		return "", false, err
+	}
+
+	if nodeID == s.clusterNode.NodeID() {
+		// Комната на текущей ноде
+		return "", true, nil
+	}
+
+	// Комната на другой ноде! Запрашиваем статус всех нод из Redis
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	defer cancel()
+
+	nodes, err := cluster.GetAllNodes(ctx, s.clusterNode.RedisClient())
+	if err != nil {
+		return "", false, err
+	}
+
+	for _, node := range nodes {
+		if node.NodeID == nodeID {
+			return node.Addr, false, nil
+		}
+	}
+
+	// Если нода не найдена (например, упала и ключ сгнил), разрешаем создать локально
+	log.Printf("[SFUServer] room %s registered on expired node %s, treating as local", roomID, nodeID)
+	return "", true, nil
+}
+
+// HandleClusterMessage распределяет входящие межсерверные сообщения по комнатам
+func (s *SFUServer) HandleClusterMessage(msg cluster.ClusterMessage) {
+	s.mu.RLock()
+	room, ok := s.rooms[msg.RoomID]
+	s.mu.RUnlock()
+
+	if !ok {
+		log.Printf("[SFUServer] HandleClusterMessage: room %s not found locally", msg.RoomID)
+		return
+	}
+
+	room.HandleClusterMessage(msg, s.clusterNode.NodeID(), s.clusterNode.RedisClient())
 }

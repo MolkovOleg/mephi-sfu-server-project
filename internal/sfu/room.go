@@ -149,6 +149,10 @@ func (r *Room) Join(peerID string, peerConfig PeerConfig) (*Peer, error) {
 		r.kafkaProducer.Emit(kafka.EventPeerJoined, r.id, peerID, nil)
 	}
 
+	if r.metrics != nil {
+		r.metrics.PeerJoined()
+	}
+
 	log.Printf("[Room] peer joined: room=%s peer=%s peers=%d",
 		r.id, peerID, r.PeerCount())
 
@@ -171,6 +175,10 @@ func (r *Room) Leave(peerID string) {
 
 	if r.kafkaProducer != nil {
 		r.kafkaProducer.Emit(kafka.EventPeerLeft, r.id, peerID, nil)
+	}
+
+	if r.metrics != nil {
+		r.metrics.PeerLeft()
 	}
 
 	// Обязательно снимаем lock ДО вызова peer.Close()
@@ -233,6 +241,9 @@ func (r *Room) Close() {
 		// вызов I/O или тяжелых операций (например, сетевых) не должен происходить под Lock
 		for id, peer := range peers {
 			peer.Close()
+			if r.metrics != nil {
+				r.metrics.PeerLeft()
+			}
 			log.Printf("[Room] peer closed (room close): room=%s peer=%s", r.id, id)
 		}
 
@@ -425,6 +436,10 @@ func (r *Room) onPeerClosed(peerID string) {
 
 	if r.kafkaProducer != nil {
 		r.kafkaProducer.Emit(kafka.EventPeerLeft, r.id, peerID, nil)
+	}
+
+	if r.metrics != nil {
+		r.metrics.PeerLeft()
 	}
 
 	r.mu.Unlock()

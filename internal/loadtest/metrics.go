@@ -3,7 +3,7 @@ package loadtest
 // =============================================================================
 // Prometheus-метрики нагрузочного клиента
 //
-// Экспортируется на отдельном порту (:9092/metrics), чтобы Prometheus мог
+// Экспортируется на отдельном порту (:9099/metrics), чтобы Prometheus мог
 // скрейпить как SFU-сервер (:8080/metrics), так и сам нагрузочный генератор.
 // =============================================================================
 
@@ -53,7 +53,7 @@ func NewLoadTestMetrics() *LoadTestMetrics {
 		ConnectionSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "loadtest_connection_seconds",
 			Help:    "Time from WebSocket dial to PeerConnectionState.Connected.",
-			Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
+			Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 90, 120},
 		}),
 		ErrorsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "loadtest_errors_total",

@@ -28,7 +28,7 @@ const (
 	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 16 * 1024 // 16 кб
+	maxMessageSize = 1048576 // 1 MB
 	sendBufSize    = 64
 )
 

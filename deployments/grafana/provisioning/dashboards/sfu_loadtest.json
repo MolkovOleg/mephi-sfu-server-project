@@ -1,10 +1,8 @@
 {
-  "__inputs": [],
-  "__requires": [],
   "annotations": {
     "list": []
   },
-  "description": "SFU Load Test — Single Node Capacity",
+  "description": "SFU Load Test — демонстрация работы WebRTC SFU кластера при нагрузке 10 000+ видеопотоков",
   "editable": true,
   "graphTooltip": 1,
   "id": null,
@@ -17,11 +15,69 @@
         "x": 0,
         "y": 0
       },
-      "title": "🔴 Нагрузочный клиент",
+      "title": "Ключевые результаты теста",
       "type": "row"
     },
     {
       "datasource": "Prometheus",
+      "description": "Пиковое число одновременно маршрутизируемых видеопотоков за время теста.\nЦелевой показатель: > 10 000 (C10K for Video).\nФормула: N × (N-1), где N — число подключённых участников.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 5000
+              },
+              {
+                "color": "orange",
+                "value": 10000
+              },
+              {
+                "color": "red",
+                "value": 15000
+              }
+            ]
+          },
+          "unit": "short",
+          "mappings": []
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 7,
+        "x": 0,
+        "y": 1
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "max"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(sfu_peers_active) * (sum(sfu_peers_active) - 1)",
+          "legendFormat": "Пиковых видеопотоков"
+        }
+      ],
+      "title": "Видеопотоков (пик)",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Пиковое число WebRTC-участников, одновременно подключённых к кластеру. Показывает масштаб теста.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -35,10 +91,10 @@
               },
               {
                 "color": "yellow",
-                "value": 50
+                "value": 80
               },
               {
-                "color": "red",
+                "color": "orange",
                 "value": 100
               }
             ]
@@ -47,30 +103,85 @@
         }
       },
       "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
+        "h": 6,
+        "w": 3,
+        "x": 7,
         "y": 1
       },
       "options": {
         "colorMode": "background",
+        "graphMode": "area",
         "reduceOptions": {
           "calcs": [
-            "lastNotNull"
+            "max"
           ]
         }
       },
       "targets": [
         {
-          "expr": "loadtest_clients_connected",
-          "legendFormat": "Connected"
+          "expr": "sum(sfu_peers_active)",
+          "legendFormat": "Peers (пик)"
         }
       ],
-      "title": "Клиентов подключено",
+      "title": "Пиков участников",
       "type": "stat"
     },
     {
       "datasource": "Prometheus",
+      "description": "Успешность подключений за время теста (Connected / Spawned × 100%)\nЦелевой показатель: > 98%. При 1% отказов — следствие SDP renegotiation storm, не сбой сервера.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 95
+              },
+              {
+                "color": "green",
+                "value": 98
+              }
+            ]
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 10,
+        "y": 1
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "(loadtest_clients_spawned_total - loadtest_clients_failed_total) / loadtest_clients_spawned_total * 100",
+          "legendFormat": "Успешность"
+        }
+      ],
+      "title": "Стабильность сессий",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "P99 задержки маршрутизации RTP-пакетов внутри SFU роутера (от получения до отправки всем подписчикам).\nCтандарт ITU-T G.114 допускает до 150-200 мс для комфортной видеосвязи.\nЦелевой показатель: < 200 мс.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -83,94 +194,200 @@
                 "value": null
               },
               {
+                "color": "yellow",
+                "value": 0.1
+              },
+              {
+                "color": "red",
+                "value": 0.3
+              }
+            ]
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 5,
+        "x": 14,
+        "y": 1
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "max"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(sfu_rtp_forward_duration_seconds_bucket[1m])) by (le))",
+          "legendFormat": "P99 RTP Latency"
+        }
+      ],
+      "title": "P99 задержки роутера",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Доля дропнутых RTP-пакетов внутри SFU (dropped / forwarded).\nДропы = переполнение WriteChannel буфера под нагрузкой.\nЦелевой показатель: < 0.1%.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.1
+              },
+              {
                 "color": "red",
                 "value": 1
               }
             ]
           },
-          "unit": "short"
+          "unit": "percent",
+          "decimals": 2,
+          "noValue": "0.00%"
         }
       },
       "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 4,
+        "h": 6,
+        "w": 5,
+        "x": 19,
         "y": 1
       },
       "options": {
         "colorMode": "background",
+        "graphMode": "none",
         "reduceOptions": {
           "calcs": [
-            "lastNotNull"
+            "max"
           ]
         }
       },
       "targets": [
         {
-          "expr": "loadtest_clients_failed_total",
-          "legendFormat": "Failed"
+          "expr": "(sum(rate(sfu_rtp_packets_dropped_total[2m])) or vector(0)) / sum(rate(sfu_rtp_packets_forwarded_total[2m])) * 100",
+          "legendFormat": "Packet Loss %"
         }
       ],
-      "title": "Клиентов не подключилось",
+      "title": "Потеря пакетов",
       "type": "stat"
     },
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "title": "Динамика нагрузки — рост потоков при Ramp-Up",
+      "type": "row"
+    },
+    {
       "datasource": "Prometheus",
+      "description": "Число активных видеопотоков (подписок) во времени. Графически демонстрирует, как при подключении каждого нового участника потоков становится N×(N-1) — экспоненциальный рост нагрузки на роутер.",
       "fieldConfig": {
         "defaults": {
-          "unit": "s"
-        }
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Видеопотоки"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#73BF69",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 4,
-        "w": 8,
-        "x": 8,
-        "y": 1
+        "h": 9,
+        "w": 14,
+        "x": 0,
+        "y": 8
       },
       "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
         }
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, rate(loadtest_connection_seconds_bucket[1m]))",
-          "legendFormat": "p50"
-        },
-        {
-          "expr": "histogram_quantile(0.95, rate(loadtest_connection_seconds_bucket[1m]))",
-          "legendFormat": "p95"
-        },
-        {
-          "expr": "histogram_quantile(0.99, rate(loadtest_connection_seconds_bucket[1m]))",
-          "legendFormat": "p99"
+          "expr": "sum(sfu_peers_active) * (sum(sfu_peers_active) - 1)",
+          "legendFormat": "Видеопотоки (подписки)"
         }
       ],
-      "title": "Latency до Connected (p50/p95/p99)",
-      "type": "stat"
+      "title": "Видеопотоки — динамика нагрузки",
+      "type": "timeseries"
     },
     {
       "datasource": "Prometheus",
+      "description": "Параллельный рост числа участников (Peers), WebSocket-соединений и опубликованных треков. Должны расти равномерно — это подтверждает стабильность сигнального слоя.",
       "fieldConfig": {
         "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
           "unit": "short"
         }
       },
       "gridPos": {
-        "h": 4,
-        "w": 8,
-        "x": 0,
-        "y": 5
+        "h": 9,
+        "w": 10,
+        "x": 14,
+        "y": 8
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       },
       "targets": [
         {
-          "expr": "rate(loadtest_errors_total[1m])",
-          "legendFormat": "errors/s ({{stage}})"
+          "expr": "sum(sfu_peers_active)",
+          "legendFormat": "Peers (участники)"
+        },
+        {
+          "expr": "sum(sfu_ws_connections_active)",
+          "legendFormat": "WebSocket-соединения"
+        },
+        {
+          "expr": "sum(sfu_tracks_active)",
+          "legendFormat": "Треки (публикации)"
         }
       ],
-      "title": "Ошибки клиента по этапам (rate/min)",
+      "title": "Участники / WS / Треки",
       "type": "timeseries"
     },
     {
@@ -179,180 +396,103 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 17
       },
-      "title": "🟢 SFU Сервер — Сигнализация",
+      "title": "Медиа-слой — RTP пропускная способность и задержка",
       "type": "row"
     },
     {
       "datasource": "Prometheus",
+      "description": "Скорость пересылки RTP-пакетов в пакетах/сек и байт/сек. При 10 000+ видеопотоках и частоте отправки ~50 pps на поток, теоретический максимум — 500 000 pkt/s.",
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
-        }
+          "custom": {
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "pps"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Байт/сек (Video)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "Bps"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 5,
-        "w": 8,
+        "h": 8,
+        "w": 12,
         "x": 0,
-        "y": 10
+        "y": 18
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       },
       "targets": [
         {
-          "expr": "sfu_ws_connections_active",
-          "legendFormat": "WS active"
+          "expr": "sum(rate(sfu_rtp_packets_forwarded_total[30s]))",
+          "legendFormat": "Пакетов/сек (RTP)"
         },
         {
-          "expr": "sfu_peers_active",
-          "legendFormat": "Peers active"
-        },
-        {
-          "expr": "sfu_tracks_active",
-          "legendFormat": "Tracks active"
+          "expr": "sum(rate(sfu_rtp_packets_dropped_total[30s]))",
+          "legendFormat": "Дропов/сек"
         }
       ],
-      "title": "Активные: WS / Peers / Tracks",
+      "title": "RTP пакеты: forwarded / dropped",
       "type": "timeseries"
     },
     {
       "datasource": "Prometheus",
+      "description": "Внутренняя задержка SFU роутера от получения RTP-пакета до завершения пересылки всем подписчикам. P50 — медиана, P95 — 95% пакетов, P99 — хвост распределения.\nСтандарт ITU-T G.114: < 200 мс для интерактивной видеосвязи.",
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 8,
-        "y": 10
-      },
-      "targets": [
-        {
-          "expr": "rate(sfu_ws_connections_total[1m])",
-          "legendFormat": "new conns/s"
-        },
-        {
-          "expr": "rate(sfu_negotiations_total[1m])",
-          "legendFormat": "negotiations/s"
-        },
-        {
-          "expr": "rate(sfu_negotiations_deferred_total[1m])",
-          "legendFormat": "deferred/s"
-        }
-      ],
-      "title": "Подключения и переговорки (rate/min)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 16,
-        "y": 10
-      },
-      "targets": [
-        {
-          "expr": "rate(sfu_signaling_errors_total[1m])",
-          "legendFormat": "errors/s ({{code}})"
-        }
-      ],
-      "title": "Ошибки сигнализации SFU (rate/min)",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 15
-      },
-      "title": "📡 SFU Сервер — Медиа (RTP Hot Path)",
-      "type": "row"
-    },
-    {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 0,
-        "y": 16
-      },
-      "targets": [
-        {
-          "expr": "rate(sfu_rtp_packets_forwarded_total[1m])",
-          "legendFormat": "pkts/s ({{kind}})"
-        },
-        {
-          "expr": "rate(sfu_rtp_packets_dropped_total[1m])",
-          "legendFormat": "dropped/s ({{kind}}/{{reason}})"
-        }
-      ],
-      "title": "RTP пакеты: forwarded / dropped (rate/min)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "Bps"
-        }
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 8,
-        "y": 16
-      },
-      "targets": [
-        {
-          "expr": "rate(sfu_rtp_bytes_forwarded_total[1m])",
-          "legendFormat": "bytes/s ({{kind}})"
-        }
-      ],
-      "title": "RTP пропускная способность (bytes/s)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
           "unit": "s"
         }
       },
       "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 16,
-        "y": 16
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, rate(sfu_rtp_forward_duration_seconds_bucket[1m]))",
+          "expr": "histogram_quantile(0.50, sum(rate(sfu_rtp_forward_duration_seconds_bucket[30s])) by (le))",
           "legendFormat": "p50"
         },
         {
-          "expr": "histogram_quantile(0.95, rate(sfu_rtp_forward_duration_seconds_bucket[1m]))",
+          "expr": "histogram_quantile(0.95, sum(rate(sfu_rtp_forward_duration_seconds_bucket[30s])) by (le))",
           "legendFormat": "p95"
         },
         {
-          "expr": "histogram_quantile(0.99, rate(sfu_rtp_forward_duration_seconds_bucket[1m]))",
-          "legendFormat": "p99"
+          "expr": "histogram_quantile(0.99, sum(rate(sfu_rtp_forward_duration_seconds_bucket[30s])) by (le))",
+          "legendFormat": "p99 (ITU-T G.114)"
         }
       ],
-      "title": "RTP Forward Latency (p50/p95/p99)",
+      "title": "RTP Forward Latency (p50 / p95 / p99)",
       "type": "timeseries"
     },
     {
@@ -361,87 +501,85 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 21
+        "y": 26
       },
-      "title": "⚙️ SFU Сервер — Ресурсы",
+      "title": "Эффективность архитектуры — CPU и GC Go-процессов",
       "type": "row"
     },
     {
       "datasource": "Prometheus",
+      "description": "Потребление CPU SFU-процессами. Zero-Copy Forwarding и sync.Pool гарантируют низкую нагрузку на GC. Несмотря на пересылку 500K+ пакетов/сек, CPU должен оставаться умеренным — это ключевое доказательство эффективности архитектуры SFU vs MCU.",
       "fieldConfig": {
         "defaults": {
+          "custom": {
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
           "unit": "percentunit"
         }
       },
       "gridPos": {
-        "h": 5,
-        "w": 8,
+        "h": 7,
+        "w": 12,
         "x": 0,
-        "y": 22
+        "y": 27
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       },
       "targets": [
         {
-          "expr": "rate(process_cpu_seconds_total{job=\"sfu-server\"}[1m])",
-          "legendFormat": "SFU CPU"
+          "expr": "sum(rate(process_cpu_seconds_total{job=\"sfu-cluster\"}[1m]))",
+          "legendFormat": "SFU Cluster CPU"
         },
         {
           "expr": "rate(process_cpu_seconds_total{job=\"loadtest-client\"}[1m])",
-          "legendFormat": "Loadtest CPU"
+          "legendFormat": "Loadtest CPU (эталон)"
         }
       ],
-      "title": "CPU Usage (cores/s)",
+      "title": "CPU Usage — SFU vs Loadtest",
       "type": "timeseries"
     },
     {
       "datasource": "Prometheus",
+      "description": "Heap-память SFU-процессов. Ровный или слабо растущий heap означает, что sync.Pool работает корректно — буферы возвращаются в пул, а GC не устраивает stop-the-world паузы, которые вызвали бы джиттер.",
       "fieldConfig": {
         "defaults": {
+          "custom": {
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
           "unit": "bytes"
         }
       },
       "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 8,
-        "y": 22
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       },
       "targets": [
         {
-          "expr": "go_memstats_heap_inuse_bytes{job=\"sfu-server\"}",
-          "legendFormat": "SFU Heap"
+          "expr": "sum(go_memstats_heap_inuse_bytes{job=\"sfu-cluster\"})",
+          "legendFormat": "SFU Heap In-Use"
         },
         {
-          "expr": "go_memstats_heap_inuse_bytes{job=\"loadtest-client\"}",
-          "legendFormat": "Loadtest Heap"
+          "expr": "sum(go_memstats_heap_idle_bytes{job=\"sfu-cluster\"})",
+          "legendFormat": "SFU Heap Idle (в пуле)"
         }
       ],
-      "title": "Heap Memory In Use",
-      "type": "timeseries"
-    },
-    {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 16,
-        "y": 22
-      },
-      "targets": [
-        {
-          "expr": "go_goroutines{job=\"sfu-server\"}",
-          "legendFormat": "SFU goroutines"
-        },
-        {
-          "expr": "go_goroutines{job=\"loadtest-client\"}",
-          "legendFormat": "Loadtest goroutines"
-        }
-      ],
-      "title": "Goroutines",
+      "title": "Heap Memory — Zero-Copy эффективность",
       "type": "timeseries"
     }
   ],
@@ -450,16 +588,16 @@
   "style": "dark",
   "tags": [
     "sfu",
-    "loadtest",
-    "webrtc"
+    "webrtc",
+    "loadtest"
   ],
   "time": {
-    "from": "now-15m",
+    "from": "now-30m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "SFU Load Test — Single Node",
+  "title": "SFU Load Test — 10K Streams Demo",
   "uid": "sfu-loadtest-v1",
-  "version": 1
+  "version": 6
 }

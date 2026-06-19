@@ -107,6 +107,17 @@ func NewCascadeBridge(
 		}()
 	})
 
+	// OnNegotiationNeeded: автоматический перезапуск negotiate() при добавлении
+	// треков пока шёл предыдущий SDP-цикл (state=have-local-offer).
+	// Pion сам вызывает этот callback когда state возвращается в stable
+	// и есть pending треки — тем самым гарантирует что ни один трек не потеряется.
+	pc.OnNegotiationNeeded(func() {
+		if !cb.isInitiator {
+			return
+		}
+		go cb.negotiate()
+	})
+
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("[CascadeBridge] connection state changed: room=%s remoteNode=%s state=%s",
 			cb.roomID, cb.remoteNodeID, state)

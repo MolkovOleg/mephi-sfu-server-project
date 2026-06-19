@@ -16,7 +16,7 @@ package main
 //   # 3. Автоматическое обнаружение всех нод через Redis:
 //   go run ./cmd/loadtest/... -redis-addr "localhost:6379" -clients 2000
 //
-// Метрики нагрузочного клиента доступны на :9092/metrics
+// Метрики нагрузочного клиента доступны на :9099/metrics
 // =============================================================================
 
 import (
@@ -52,7 +52,7 @@ func main() {
 		"Количество параллельных комнат")
 	roomPrefix := flag.String("room-prefix", "loadtest",
 		"Префикс имён комнат")
-	metricsAddr := flag.String("metrics-addr", ":9092",
+	metricsAddr := flag.String("metrics-addr", ":9099",
 		"Адрес для Prometheus /metrics эндпоинта нагрузочного клиента")
 	redisAddr := flag.String("redis-addr", "",
 		"Адрес Redis для авто-обнаружения нод кластера (например, localhost:6379)")

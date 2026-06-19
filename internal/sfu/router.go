@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"sync"
+	"time"
 
 	appmetrics "sfu-server/internal/metrics"
 )
@@ -96,6 +97,9 @@ func (r *Router) RemoveReceiver(trackID string) {
 	if senders, ok := r.senders[trackID]; ok {
 		for peerID, sender := range senders {
 			sender.Stop()
+			if r.metrics != nil {
+				r.metrics.SubscriptionRemoved()
+			}
 			log.Printf("[Router] sender removed (receiver gone): track=%s peer=%s",
 				trackID, peerID)
 		}
@@ -168,6 +172,10 @@ func (r *Router) Subscribe(
 	// Запуск записи пакетов в трек
 	sender.Start()
 
+	if r.metrics != nil {
+		r.metrics.SubscriptionAdded()
+	}
+
 	// Запрашиваем также ключевой I-frame для ноовго подписчика
 	receiver.RequestKeyFrame()
 
@@ -196,6 +204,10 @@ func (r *Router) Unsubscribe(trackID string, peerID string) {
 	sender.Stop()
 	delete(senders, peerID)
 
+	if r.metrics != nil {
+		r.metrics.SubscriptionRemoved()
+	}
+
 	log.Printf("[Router] unsubscribed: track=%s peer=%s", trackID, peerID)
 }
 
@@ -208,6 +220,11 @@ func (r *Router) UnsubscribeAll(peerID string) {
 		if sender, ok := senders[peerID]; ok {
 			sender.Stop()
 			delete(senders, peerID)
+
+			if r.metrics != nil {
+				r.metrics.SubscriptionRemoved()
+			}
+
 			log.Printf("[Router] unsubscribed from all: track=%s peer=%s", trackID, peerID)
 		}
 	}
@@ -228,6 +245,9 @@ func (r *Router) forward(trackID string, buf *[]byte, n int) {
 		return
 	}
 
+	// Замеряем время пересылки для Prometheus histogram (RTP Forward Latency)
+	start := time.Now()
+
 	// Рассылаем пакеты всем подписчикам этого трека
 	for _, sender := range senders {
 		sender.WriteRTP(buf, n)
@@ -239,6 +259,7 @@ func (r *Router) forward(trackID string, buf *[]byte, n int) {
 		senderCount := len(senders)
 		m.RTPPacketsForwarded.WithLabelValues(kind).Add(float64(senderCount))
 		m.RTPBytesForwarded.WithLabelValues(kind).Add(float64(n * senderCount))
+		m.RTPForwardDuration.Observe(time.Since(start).Seconds())
 	}
 
 	r.mu.RUnlock()
@@ -296,6 +317,9 @@ func (r *Router) Close() {
 	for trackID, senders := range r.senders {
 		for peerID, sender := range senders {
 			sender.Stop()
+			if r.metrics != nil {
+				r.metrics.SubscriptionRemoved()
+			}
 			log.Printf("[Router] sender stopped (close): track=%s peer=%s", trackID, peerID)
 		}
 	}

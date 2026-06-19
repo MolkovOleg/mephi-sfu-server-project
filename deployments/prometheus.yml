@@ -16,8 +16,8 @@ scrape_configs:
   - job_name: 'loadtest-client'
     static_configs:
       - targets:
-          - 'host.docker.internal:9092'
-          - 'sfu-loadtest:9092'
+          - 'host.docker.internal:9099'
+          - 'sfu-loadtest:9099'
     metrics_path: '/metrics'
     scrape_timeout: 2s
     honor_labels: true

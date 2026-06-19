@@ -53,9 +53,10 @@ type Metrics struct {
 	SignalingErrTotal   *prometheus.CounterVec // label: code
 
 	// ── SFU-ядро ────────────────────────────────────────────────────────────
-	RoomsActive  prometheus.Gauge
-	PeersActive  prometheus.Gauge
-	TracksActive prometheus.Gauge
+	RoomsActive         prometheus.Gauge
+	PeersActive         prometheus.Gauge
+	TracksActive        prometheus.Gauge
+	SubscriptionsActive prometheus.Gauge
 
 	// ── Медиа (hot path) ────────────────────────────────────────────────────
 	RTPPacketsForwarded *prometheus.CounterVec // labels: kind (audio|video)
@@ -106,6 +107,10 @@ func New() *Metrics {
 			Name: "sfu_tracks_active",
 			Help: "Current number of active media tracks (receivers) in the router.",
 		}),
+		SubscriptionsActive: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "sfu_subscriptions_active",
+			Help: "Current number of active media subscriptions (video streams) in the router.",
+		}),
 
 		// Медиа hot path
 		RTPPacketsForwarded: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -123,9 +128,12 @@ func New() *Metrics {
 		RTPForwardDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name: "sfu_rtp_forward_duration_seconds",
 			Help: "Time spent forwarding one RTP packet to all subscribers.",
-			// Buckets: от 5 мкс до 50 мс — диапазон реального LAN/WAN
-			Buckets: []float64{0.000005, 0.00001, 0.000025, 0.00005,
-				0.0001, 0.00025, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05},
+			// Buckets: от 5 мкс до 500 мс — охватывает и LAN и 10K потоков с нагрузкой
+			Buckets: []float64{
+				0.000005, 0.00001, 0.000025, 0.00005,
+				0.0001, 0.00025, 0.0005, 0.001,
+				0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.5,
+			},
 		}),
 
 		// Переговоры
@@ -149,6 +157,7 @@ func New() *Metrics {
 		m.RoomsActive,
 		m.PeersActive,
 		m.TracksActive,
+		m.SubscriptionsActive,
 
 		m.RTPPacketsForwarded,
 		m.RTPBytesForwarded,
@@ -230,6 +239,16 @@ func (m *Metrics) TrackAdded() {
 // TrackRemoved вызывается при удалении Receiver'а из Router.
 func (m *Metrics) TrackRemoved() {
 	m.TracksActive.Dec()
+}
+
+// SubscriptionAdded вызывается при создании новой подписки на видеопоток.
+func (m *Metrics) SubscriptionAdded() {
+	m.SubscriptionsActive.Inc()
+}
+
+// SubscriptionRemoved вызывается при удалении подписки на видеопоток.
+func (m *Metrics) SubscriptionRemoved() {
+	m.SubscriptionsActive.Dec()
 }
 
 // ConnectionOpened вызывается при новом WebSocket-соединении.

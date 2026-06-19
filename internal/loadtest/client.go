@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/pion/logging"
 	"github.com/pion/webrtc/v3"
 	"github.com/pion/webrtc/v3/pkg/media"
 )
@@ -130,7 +131,23 @@ func (c *Client) runAttempt(ctx context.Context, addr string, start time.Time, r
 
 	// --- 2. PeerConnection ---
 	result.Stage = "peer_connection"
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{
+	
+	mEngine := &webrtc.MediaEngine{}
+	if err := mEngine.RegisterDefaultCodecs(); err != nil {
+		return false, "", fmt.Errorf("register codecs: %w", err)
+	}
+
+	settingEngine := webrtc.SettingEngine{}
+	loggerFactory := logging.NewDefaultLoggerFactory()
+	loggerFactory.DefaultLogLevel = logging.LogLevelError // Suppress warning spam about unhandled SSRC
+	settingEngine.LoggerFactory = loggerFactory
+
+	api := webrtc.NewAPI(
+		webrtc.WithMediaEngine(mEngine),
+		webrtc.WithSettingEngine(settingEngine),
+	)
+
+	pc, err := api.NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{}, // Empty for local loopback scaling to avoid public STUN rate limits
 	})
 	if err != nil {
@@ -142,14 +159,14 @@ func (c *Client) runAttempt(ctx context.Context, addr string, start time.Time, r
 	result.Stage = "tracks"
 	videoTrack, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8},
-		"video", "stream-"+c.cfg.PeerID,
+		"video-"+c.cfg.PeerID, "stream-"+c.cfg.PeerID,
 	)
 	if err != nil {
 		return false, "", fmt.Errorf("video track: %w", err)
 	}
 	audioTrack, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
-		"audio", "stream-"+c.cfg.PeerID,
+		"audio-"+c.cfg.PeerID, "stream-"+c.cfg.PeerID,
 	)
 	if err != nil {
 		return false, "", fmt.Errorf("audio track: %w", err)
@@ -159,12 +176,12 @@ func (c *Client) runAttempt(ctx context.Context, addr string, start time.Time, r
 	if err != nil {
 		return false, "", fmt.Errorf("add video: %w", err)
 	}
-	audioSender, err := pc.AddTrack(audioTrack)
-	if err != nil {
-		return false, "", fmt.Errorf("add audio: %w", err)
-	}
+	// audioSender, err := pc.AddTrack(audioTrack)
+	// if err != nil {
+	// 	return false, "", fmt.Errorf("add audio: %w", err)
+	// }
 	go drainRTCP(videoSender)
-	go drainRTCP(audioSender)
+	// go drainRTCP(audioSender)
 
 	// --- 4. OnTrack: дренируем все входящие треки от других пиров ---
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
@@ -223,7 +240,7 @@ func (c *Client) runAttempt(ctx context.Context, addr string, start time.Time, r
 	}
 
 	// --- 8. Горутина чтения WebSocket ---
-	msgCh := make(chan signalMsg, 128)
+	msgCh := make(chan signalMsg, 10000)
 	go func() {
 		defer close(msgCh)
 		for {
@@ -283,7 +300,7 @@ func (c *Client) runAttempt(ctx context.Context, addr string, start time.Time, r
 
 	// --- 9. Фаза сигнализации: ждём Connected ---
 	result.Stage = "signaling"
-	connTimeout := time.NewTimer(30 * time.Second)
+	connTimeout := time.NewTimer(120 * time.Second)
 	defer connTimeout.Stop()
 
 	waitConnected := true

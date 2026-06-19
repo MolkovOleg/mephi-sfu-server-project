@@ -71,12 +71,12 @@ func DefaultPeerConfig() PeerConfig {
 
 // Представление подключенного клиента в SFU
 type Peer struct {
-	id                 string
-	pc                 *webrtc.PeerConnection
-	router             *Router
-	state              PeerState
-	rtpSenders         map[string]*webrtc.RTPSender
-	onNegotiate        func(msg NegotiationMessage)
+	id                  string
+	pc                  *webrtc.PeerConnection
+	router              *Router
+	state               PeerState
+	rtpSenders          map[string]*webrtc.RTPSender
+	onNegotiate         func(msg NegotiationMessage)
 	onClose             func(peerID string)
 	mu                  sync.Mutex
 	negotiationPending  bool
